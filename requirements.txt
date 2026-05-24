@@ -9,3 +9,4 @@ joblib
 emoji
 contractions
 langdetect
+nltk
