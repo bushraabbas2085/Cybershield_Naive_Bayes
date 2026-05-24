@@ -17,12 +17,11 @@ nltk.download('omw-1.4',  quiet=True)
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-from langdetect import detect, LangDetectException
 
 app = Flask(__name__)
 
 # ---------------------------------------------------
-# Globals — identical to v2 notebook
+# Globals
 # ---------------------------------------------------
 STOP_WORDS = set(stopwords.words('english'))
 LEMMATIZER = WordNetLemmatizer()
@@ -34,7 +33,7 @@ try:
     model      = joblib.load('naive_bayes_model.pkl')
     vectorizer = joblib.load('count_vectorizer.pkl')
     tfidf      = joblib.load('tfidf_transformer.pkl')
-    le         = joblib.load('label_encoder.pkl')   # FIX: use LabelEncoder, not hardcoded dict
+    le         = joblib.load('label_encoder.pkl')
     CLASS_NAMES = list(le.classes_)
     print("Model files loaded successfully.")
     print("Classes:", CLASS_NAMES)
@@ -44,8 +43,9 @@ except Exception as e:
     le          = None
     CLASS_NAMES = []
 
+
 # ---------------------------------------------------
-# Text Cleaning — exact copy of v2 notebook pipeline
+# Text Cleaning Functions
 # ---------------------------------------------------
 
 def strip_emoji(text: str) -> str:
@@ -57,28 +57,13 @@ def expand_contractions_fn(text: str) -> str:
 
 
 def strip_all_entities(text: str) -> str:
-    """Lowercase, remove links / mentions, non-ASCII, punctuation, stopwords."""
+    """Lowercase, remove links/mentions, non-ASCII, punctuation, stopwords."""
     text = re.sub(r'\r|\n', ' ', text.lower())
     text = re.sub(r'(?:\@|https?://|www\.)\S+', '', text)
     text = re.sub(r'[^\x00-\x7f]', '', text)
     table = str.maketrans('', '', string.punctuation)
     text = text.translate(table)
     return ' '.join(w for w in text.split() if w not in STOP_WORDS)
-
-
-def filter_non_english(text: str) -> str:
-    """
-    Return empty string for non-English text.
-    Called AFTER strip_all_entities so raw URLs / mentions
-    do not confuse langdetect.
-    """
-    if not text.strip():
-        return ''
-    try:
-        lang = detect(text)
-    except LangDetectException:
-        lang = 'unknown'
-    return text if lang == 'en' else ''
 
 
 def clean_hashtags(tweet: str) -> str:
@@ -116,14 +101,26 @@ def remove_url_shorteners(text: str) -> str:
 
 def clean_tweet(tweet: str) -> str:
     """
-    Full v2 cleaning pipeline.
-    Order matters: strip_all_entities runs BEFORE filter_non_english
-    so noise (URLs, @mentions) does not confuse the language detector.
+    Inference cleaning pipeline — matches v2 notebook exactly,
+    with one intentional difference:
+
+    filter_non_english() is REMOVED from the inference path.
+
+    Reason: langdetect is unreliable on short texts (1-3 words)
+    that remain after stopword removal. For example:
+      "You are a liar"  -->  stopwords strip to  "liar"
+      langdetect("liar") may return non-English --> empty string --> 422 error.
+
+    Language filtering was a DATA CLEANING step for training only
+    (to remove foreign-language tweets from the dataset).
+    At inference time we predict on whatever text is given;
+    non-English input will produce a low-confidence prediction,
+    which the caller can handle via the confidence score.
     """
     tweet = strip_emoji(tweet)
     tweet = expand_contractions_fn(tweet)
-    tweet = strip_all_entities(tweet)       # clean first …
-    tweet = filter_non_english(tweet)       # … then detect language
+    tweet = strip_all_entities(tweet)
+    # filter_non_english intentionally omitted at inference time
     tweet = clean_hashtags(tweet)
     tweet = filter_chars(tweet)
     tweet = remove_numbers(tweet)
@@ -133,6 +130,7 @@ def clean_tweet(tweet: str) -> str:
     tweet = remove_url_shorteners(tweet)
     tweet = ' '.join(tweet.split())
     return tweet.strip()
+
 
 # ---------------------------------------------------
 # Home Route
@@ -144,6 +142,7 @@ def home():
         "classes": CLASS_NAMES
     })
 
+
 # ---------------------------------------------------
 # Health Check Route
 # ---------------------------------------------------
@@ -151,10 +150,11 @@ def home():
 def health():
     model_loaded = le is not None
     return jsonify({
-        "status": "healthy" if model_loaded else "degraded",
+        "status":       "healthy" if model_loaded else "degraded",
         "model_loaded": model_loaded,
-        "classes": CLASS_NAMES
+        "classes":      CLASS_NAMES
     }), 200 if model_loaded else 503
+
 
 # ---------------------------------------------------
 # Prediction Route
@@ -196,13 +196,15 @@ def predict():
         # ── Clean ────────────────────────────────────
         cleaned = clean_tweet(text)
 
-        # If cleaning wipes the text entirely (e.g. non-English tweet),
-        # return a graceful response instead of predicting on an empty string.
+        # If cleaning produces an empty string (e.g. input was only
+        # punctuation / numbers / emoji), fall back to a minimal clean
+        # so the vectorizer always receives something.
         if not cleaned.strip():
-            return jsonify({
-                "success": False,
-                "error": "Text is empty after cleaning (possibly non-English or only special characters)."
-            }), 422
+            fallback = re.sub(r'\s+', ' ', text.lower().strip())
+            fallback = fallback.translate(
+                str.maketrans('', '', string.punctuation)
+            ).strip()
+            cleaned = fallback if fallback.strip() else text.lower().strip()
 
         # ── Vectorise ────────────────────────────────
         cv_vector    = vectorizer.transform([cleaned])
@@ -212,8 +214,7 @@ def predict():
         pred_label = model.predict(tfidf_vector)[0]
         confidence = float(model.predict_proba(tfidf_vector)[0].max())
 
-        # FIX: decode via LabelEncoder — not a hardcoded dict.
-        # This always matches whichever classes were present during training.
+        # Decode via LabelEncoder — never a hardcoded dict
         result = le.inverse_transform([pred_label])[0]
 
         # ── Response ─────────────────────────────────
@@ -233,6 +234,7 @@ def predict():
             "error": str(e)
         }), 500
 
+
 # ---------------------------------------------------
 # Handle Invalid Routes
 # ---------------------------------------------------
@@ -243,6 +245,7 @@ def not_found(error):
         "error": "Route not found"
     }), 404
 
+
 # ---------------------------------------------------
 # Handle Internal Server Errors
 # ---------------------------------------------------
@@ -252,6 +255,7 @@ def internal_error(error):
         "success": False,
         "error": "Internal server error"
     }), 500
+
 
 # ---------------------------------------------------
 # Run Flask App
