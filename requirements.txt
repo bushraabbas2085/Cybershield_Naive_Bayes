@@ -1,9 +1,11 @@
-contractions
-langdetect
 flask
 gunicorn
+torch
+transformers
 scikit-learn
 numpy
 scipy
 joblib
 emoji
+contractions
+langdetect
