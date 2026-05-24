@@ -100,23 +100,6 @@ def remove_url_shorteners(text: str) -> str:
 
 
 def clean_tweet(tweet: str) -> str:
-    """
-    Inference cleaning pipeline — matches v2 notebook exactly,
-    with one intentional difference:
-
-    filter_non_english() is REMOVED from the inference path.
-
-    Reason: langdetect is unreliable on short texts (1-3 words)
-    that remain after stopword removal. For example:
-      "You are a liar"  -->  stopwords strip to  "liar"
-      langdetect("liar") may return non-English --> empty string --> 422 error.
-
-    Language filtering was a DATA CLEANING step for training only
-    (to remove foreign-language tweets from the dataset).
-    At inference time we predict on whatever text is given;
-    non-English input will produce a low-confidence prediction,
-    which the caller can handle via the confidence score.
-    """
     tweet = strip_emoji(tweet)
     tweet = expand_contractions_fn(tweet)
     tweet = strip_all_entities(tweet)
