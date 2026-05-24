@@ -1,4 +1,5 @@
 contractions
+langdetect
 flask
 gunicorn
 scikit-learn
