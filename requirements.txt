@@ -1,3 +1,4 @@
+contractions
 flask
 gunicorn
 scikit-learn
